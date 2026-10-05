@@ -20,17 +20,20 @@ const (
 	OutcomeOK Outcome = iota
 	// Transient (network, 5xx, 429): keep them and retry with backoff.
 	OutcomeRetry
-	// The backend will never accept them (400/422): drop them, or they
-	// would block everything queued behind them.
+	// The backend will never accept them (400): drop them, or they would
+	// block everything queued behind them.
 	OutcomeDrop
 	// Too large (413): retry with fewer records.
 	OutcomeTooLarge
 	// Key unknown (401) or server deleted (410): stop pushing.
 	OutcomeRevoked
+	// Invalid (422): something in the batch is refused. Retry with fewer
+	// records until the culprit is alone, so it does not cost the rest.
+	OutcomeInvalid
 )
 
 func (o Outcome) String() string {
-	return [...]string{"ok", "retrying", "rejected", "too large", "revoked"}[o]
+	return [...]string{"ok", "retrying", "rejected", "too large", "revoked", "invalid"}[o]
 }
 
 // Classify maps an HTTP status to an Outcome (0 = no response at all).
@@ -42,6 +45,8 @@ func Classify(status int) Outcome {
 		return OutcomeRevoked
 	case status == http.StatusRequestEntityTooLarge:
 		return OutcomeTooLarge
+	case status == http.StatusUnprocessableEntity:
+		return OutcomeInvalid
 	case status == 0, status == http.StatusRequestTimeout, status == http.StatusTooEarly,
 		status == http.StatusTooManyRequests, status >= 500:
 		return OutcomeRetry

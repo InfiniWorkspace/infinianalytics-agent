@@ -97,6 +97,27 @@ func TestSpoolSurvivesARestart(t *testing.T) {
 	}
 }
 
+func TestSpoolKeepsOrderWhenTheSequenceStartsOver(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := OpenSpool(dir, time.Hour, 1<<30)
+	for i := uint64(500); i <= 502; i++ {
+		s.Append(rec(i))
+	}
+	_, mark, _ := s.Peek(1)
+	s.Ack(mark)
+	s.Close()
+
+	// A restart that lost state.json numbers records from 1 again.
+	s2, _ := OpenSpool(dir, time.Hour, 1<<30)
+	defer s2.Close()
+	s2.Append(rec(1))
+	s2.Append(rec(2))
+	got, _, _ := s2.Peek(10)
+	if !equal(seqs(got), []uint64{501, 502, 1, 2}) {
+		t.Fatalf("pending = %v, want the old records then the new ones", seqs(got))
+	}
+}
+
 func TestSpoolDropsOldestPastTheByteCap(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := OpenSpool(dir, 0, 1) // tiny cap: only the active segment survives

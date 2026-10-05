@@ -9,8 +9,8 @@
 #   4. an agent.env left root-owned (what earlier versions did) makes `run`
 #      say so, and the next install repairs it;
 #   5. install fails, with the log, when the service does not stay up;
-#   6. the dashboard's uninstall line forgets the server, and a reinstall with
-#      a new code comes up.
+#   6. windows buffered while the backend is down survive the dashboard's
+#      reinstall (its uninstall line, then a new code) and arrive afterwards.
 # Needs systemd and passwordless sudo, and changes the machine: CI only.
 set -euo pipefail
 
@@ -117,18 +117,32 @@ sudo rm -r "$dropin"
 sudo "/usr/local/bin/$name" install
 stays_up 35
 
-echo "--- 6. the dashboard's uninstall line, then a reinstall with a new code"
-# Both paths: with DynamicUser= the first is only systemd's link to the
-# second. Removing the link alone leaves the key behind, and the reinstall's
-# fresh /var/lib/$name then stops systemd from making the link again
-# ("Failed to set up special execution directory in /var/lib: File exists").
-sudo sh -c "/usr/local/bin/$name uninstall; rm -rf /var/lib/$name /var/lib/private/$name"
-if sudo test -e "$state" || [ -e "/var/lib/$name" ]; then
-  echo "the uninstall line left the state directory behind"
-  exit 1
-fi
+echo "--- 6. the backend goes down, then the dashboard's reinstall: nothing buffered is lost"
+touch "$tmp/ingest/down"
+down_from=$(date -u +%s)
+sleep 30
+# The dashboard's uninstall line removes the service only: the state
+# directory, and the spool in it, stay for the reinstall.
+stopped_at=$(date -u +%s)
+sudo "/usr/local/bin/$name" uninstall
+sudo test -d "$state/spool" || { echo "uninstall removed the spool"; exit 1; }
 installer --code SMOKE-CODE-0002 --url "http://127.0.0.1:$port"
+rm "$tmp/ingest/down"
 owned_by_service agent.env
+# Every window that closed while the backend was down arrives, under the new key.
+first=$(( down_from / 10 * 10 + 10 )) last=$(( (stopped_at - 10) / 10 * 10 ))
+missing() {
+  local t
+  for ((t = first; t <= last; t += 10)); do
+    grep -qx "$(date -u -d "@$t" +%Y-%m-%dT%H:%M:%SZ)" "$tmp/ingest/samples.log" || { echo "$t"; return; }
+  done
+}
+for _ in $(seq 1 60); do
+  [ -z "$(missing)" ] && break
+  sleep 1
+done
+gap=$(missing)
+[ -z "$gap" ] || { echo "the window at $(date -u -d "@$gap") never arrived"; exit 1; }
 stays_up 35
 
 echo "systemd test passed"
