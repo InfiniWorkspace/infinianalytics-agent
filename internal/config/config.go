@@ -126,7 +126,7 @@ func Load(explicit string) Config {
 		WindowInterval:     l.seconds("IA_AGENT_WINDOW", 10*time.Second),
 		FilesystemInterval: l.seconds("IA_AGENT_FS_INTERVAL", time.Minute),
 		SpoolMaxAge:        l.seconds("IA_AGENT_SPOOL_MAX_AGE", 48*time.Hour),
-		SpoolMaxBytes:      int64(l.int("IA_AGENT_SPOOL_MAX_MB", 50)) << 20,
+		SpoolMaxBytes:      int64(l.int("IA_AGENT_SPOOL_MAX_MB", 65)) << 20,
 		DisksEnabled:       l.bool(KeyDisks, true),
 		DockerEnabled:      l.bool(KeyDocker, true),
 		ContainerLimit:     l.int("IA_AGENT_CONTAINER_LIMIT", 50),

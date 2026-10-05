@@ -33,7 +33,7 @@ under **Infraestructura → Servidores**.
 - 🐳 **Containers** — once per window, the busiest 50 containers by CPU + memory (stopped ones fill any room left), keyed by compose `project/service` so a redeploy continues the same series
 - 📣 **Docker Events** — the event stream adds starts, stops, crashes with exit codes, OOM kills, restarts, health changes and deploys (a start on a new image)
 - 🧩 **Modules** — host vitals are always sent; disk space and Docker (stats and events) are on by default and can each be turned off, and then are neither read nor sent. See [Modules](#modules)
-- 💾 **Spool** — every closed window is written to an append-only, fsynced spool before it is pushed, and removed once the backend acknowledges it. While the backend is unreachable it keeps up to 48 h / 50 MB (oldest dropped first) and drains oldest-first, an hour per request, when it is back — the charts have no hole
+- 💾 **Spool** — every closed window is written to an append-only, fsynced spool before it is pushed, and removed once the backend acknowledges it. While the backend is unreachable it keeps up to 48 h / 65 MB (oldest dropped first) and drains oldest-first, an hour per request, when it is back — the charts have no hole
 - 🚀 **Pushing** — one gzip POST every 10 s (the backend can ask for another cadence), with exponential backoff and jitter on 5xx / network errors. `401` / `410` (key replaced, server deleted from the dashboard) stop pushing until `enroll` is run again
 - 🔌 **Why It Stopped** — just before SIGTERM the unit's `ExecStop` asks systemd, as root and without D-Bus, what is queued (`reboot.target` → reboot, `poweroff.target` → shutdown, nothing → the service was stopped); the Windows service accepts PRESHUTDOWN for the same purpose. The `stopping` event is spooled first, then pushed with a 3 s timeout. Together with the kernel boot id this is how the backend tells a reboot from a crash from a network cut
 - 🔒 **Own Key per Server** — a one-time code is traded for this server's key, stored readable only by root / SYSTEM and Administrators. Re-enrolling the same machine keeps its history
@@ -176,7 +176,7 @@ the same name take precedence over the file. All settings, with comments, are in
 | `IA_AGENT_SAMPLE_INTERVAL` | `2` | | Seconds between vitals samples. |
 | `IA_AGENT_WINDOW` | `10` | | Seconds per summarised window (and push). |
 | `IA_AGENT_FS_INTERVAL` | `60` | ✓ | Seconds between filesystem readings. |
-| `IA_AGENT_SPOOL_MAX_AGE` / `IA_AGENT_SPOOL_MAX_MB` | `172800` / `50` | ✓ | Undelivered data kept on disk, up to both limits. |
+| `IA_AGENT_SPOOL_MAX_AGE` / `IA_AGENT_SPOOL_MAX_MB` | `172800` / `65` | ✓ | Undelivered data kept on disk, up to both limits. |
 | `IA_AGENT_DISKS` | `true` | ✓ | Disk space module: filesystem readings and mount events. |
 | `IA_AGENT_DOCKER` | `true` | ✓ | Docker module: container stats and the event stream. |
 | `IA_AGENT_CONTAINER_LIMIT` | `50` | ✓ | Busiest containers sent per window (`0` = all). |

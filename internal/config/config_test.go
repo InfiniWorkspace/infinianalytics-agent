@@ -116,7 +116,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SampleInterval != 2*time.Second || cfg.WindowInterval != 10*time.Second {
 		t.Errorf("intervals = %v / %v", cfg.SampleInterval, cfg.WindowInterval)
 	}
-	if cfg.SpoolMaxAge != 48*time.Hour || cfg.SpoolMaxBytes != 50<<20 {
+	if cfg.SpoolMaxAge != 48*time.Hour || cfg.SpoolMaxBytes != 65<<20 {
 		t.Errorf("spool caps = %v / %d", cfg.SpoolMaxAge, cfg.SpoolMaxBytes)
 	}
 	if !cfg.DockerEnabled || cfg.ContainerLimit != 50 {
