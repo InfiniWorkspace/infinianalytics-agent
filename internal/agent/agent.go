@@ -16,6 +16,12 @@ import (
 const (
 	// Records per push: one hour of 10 s windows, the backend's cap.
 	maxRecordsPerPush = 360
+	// The backend's other caps on one push (MetricsBatch in
+	// app/schemas/servers.py). A backlog of busy windows can reach them
+	// well before 360 records.
+	maxContainerRowsPerPush  = 20_000
+	maxFilesystemRowsPerPush = 5_000
+	maxEventsPerPush         = 1_000
 	// While draining a backlog, pause this long between pushes.
 	drainPause = time.Second
 	// Host identity is re-sent at least this often even when unchanged.
@@ -165,6 +171,7 @@ func StateFiles(dir string) []string {
 		filepath.Join(dir, stateFile),
 		filepath.Join(dir, stopReasonFile),
 		filepath.Join(dir, machineIDFile),
+		filepath.Join(dir, enrollCodeFile),
 		SpoolDir(dir),
 	}
 }
@@ -343,7 +350,7 @@ func (a *Agent) pushLoop(ctx context.Context) {
 			return
 		case <-time.After(wait):
 		}
-		recs, mark, err := a.spool.Peek(limit)
+		recs, mark, err := a.peekPush(limit)
 		if err != nil {
 			a.logf("spool: %v", err)
 			wait = a.cfg.WindowInterval
@@ -375,12 +382,16 @@ func (a *Agent) pushLoop(ctx context.Context) {
 		case OutcomeRetry:
 			wait = b.next()
 			a.logf("push failed (%v); retrying in %s", err, wait.Round(time.Second))
-		case OutcomeTooLarge:
-			if limit == 1 {
-				a.logf("dropping one window the backend refuses as too large")
+		case OutcomeTooLarge, OutcomeInvalid:
+			// Halve until the window the backend refuses is pushed alone,
+			// then drop just that one.
+			if len(recs) == 1 {
+				a.logf("dropping one window the backend refuses: %v", err)
 				_ = a.spool.Ack(mark)
+				limit = maxRecordsPerPush
+			} else {
+				limit = max(1, len(recs)/2)
 			}
-			limit = max(1, limit/2)
 			wait = drainPause
 		case OutcomeDrop:
 			a.logf("backend rejected %d window(s), dropping them: %v", len(recs), err)
@@ -423,7 +434,7 @@ func (a *Agent) waitForNewKey(ctx context.Context, p *Pusher) bool {
 // on the way out, so the stop reason reaches the backend before the machine
 // goes down whenever the network allows it.
 func (a *Agent) pushOnce(ctx context.Context, p *Pusher) {
-	recs, mark, err := a.spool.Peek(maxRecordsPerPush)
+	recs, mark, err := a.peekPush(maxRecordsPerPush)
 	if err != nil || len(recs) == 0 {
 		return
 	}
@@ -434,6 +445,34 @@ func (a *Agent) pushOnce(ctx context.Context, p *Pusher) {
 		_ = a.spool.Ack(mark)
 		a.markHostSent(batch)
 	}
+}
+
+// peekPush is the next push: up to limit pending records, as many as fit.
+func (a *Agent) peekPush(limit int) ([]Record, Mark, error) {
+	recs, mark, err := a.spool.Peek(limit)
+	if err != nil {
+		return nil, mark, err
+	}
+	if n := fitPush(recs); n < len(recs) {
+		return a.spool.Peek(n)
+	}
+	return recs, mark, nil
+}
+
+// fitPush is how many of recs, from the oldest, one push can carry within the
+// backend's caps. At least one: a record alone is always tried.
+func fitPush(recs []Record) int {
+	var containers, filesystems, events int
+	for i, r := range recs {
+		containers += len(r.Containers)
+		filesystems += len(r.Filesystems)
+		events += len(r.Events)
+		if i > 0 && (containers > maxContainerRowsPerPush ||
+			filesystems > maxFilesystemRowsPerPush || events > maxEventsPerPush) {
+			return i
+		}
+	}
+	return len(recs)
 }
 
 // buildBatch merges spooled records into one request.

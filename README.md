@@ -81,8 +81,9 @@ docker run -d --name infinianalytics-agent --restart unless-stopped --network ho
   ghcr.io/infiniworkspace/infinianalytics-agent:latest
 ```
 
-The code is only used on the first start; the key it is traded for lives in the `/state`
-volume. Add `-e IA_AGENT_DISKS=false` and/or `-e IA_AGENT_DOCKER=false` to leave those
+The code is used once; the key it is traded for lives in the `/state` volume. A container
+started with a new code (a reinstall) enrolls again in place, keeping the volume's spool.
+Add `-e IA_AGENT_DISKS=false` and/or `-e IA_AGENT_DOCKER=false` to leave those
 [modules](#modules) out (without Docker the socket mount is not needed). In the container a host reboot is seen as a plain `docker stop`; the new boot id still makes
 it a "reinicio", but a shutdown and power-on reads the same way.
 
@@ -101,7 +102,9 @@ service runs as a throwaway systemd user that owns that directory, and whatever 
 `install` write there as root is given to it; `install` also gives back files older versions
 left owned by root, and fails, printing the last log lines, if the service does not stay up.
 Re-enrolling the same machine (same `/etc/machine-id` or `MachineGuid`) re-binds to the same
-server and keeps its history.
+server and keeps its history, and the spool too: windows the old key could not deliver go out
+under the new one. That is the way to point an agent at a new backend address without losing
+what it buffered - `uninstall` keeps the state directory for the same reason.
 
 ## Modules
 

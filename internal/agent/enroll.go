@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,7 +29,14 @@ type EnrollResult struct {
 	AgentKey      string `json:"agent_key"`
 	PushURL       string `json:"push_url"`
 	PushIntervalS int    `json:"push_interval_s"`
+	// The windows still in the spool were dropped: they belong to the server
+	// this machine reported as before, not to the one it enrolled as now.
+	DroppedSpool bool `json:"-"`
 }
+
+// ErrEnrollRefused: the backend answered and will not take the code (unknown,
+// expired or used elsewhere). Trying it again cannot help.
+var ErrEnrollRefused = errors.New("enrollment refused")
 
 // HostIdentity is what this machine reports about itself. In a container
 // (hostRoot set) the host's own hostname and OS release are read from it.
@@ -67,10 +75,7 @@ func stableMachineID(cfg config.Config) (string, error) {
 	if id := machineID(cfg.HostRoot); id != "" {
 		return id, nil
 	}
-	dir := cfg.StateDir
-	if dir == "" {
-		dir = filepath.Dir(cfg.File)
-	}
+	dir := stateDir(cfg)
 	path := filepath.Join(dir, machineIDFile)
 	if raw, err := os.ReadFile(path); err == nil {
 		if id := strings.TrimSpace(string(raw)); id != "" {
@@ -136,7 +141,7 @@ func Enroll(ctx context.Context, cfg config.Config, url, code, version string) (
 		if answer.Detail == "" {
 			answer.Detail = resp.Status
 		}
-		return EnrollResult{}, fmt.Errorf("enrollment refused: %s", answer.Detail)
+		return EnrollResult{}, fmt.Errorf("%w: %s", ErrEnrollRefused, answer.Detail)
 	}
 	var out EnrollResult
 	if err := json.Unmarshal(raw, &out); err != nil || out.ServerID == "" || out.AgentKey == "" {
@@ -151,5 +156,41 @@ func Enroll(ctx context.Context, cfg config.Config, url, code, version string) (
 	if err != nil {
 		return out, fmt.Errorf("enrolled as %s but could not save %s: %w", out.ServerID, path, err)
 	}
+	// Re-enrolling (a reinstall, a new backend address) keeps the spool, so
+	// what could not be pushed yet still goes out under the new key - unless
+	// the machine is now another server, which must not get its windows.
+	if cfg.ServerID != "" && cfg.ServerID != out.ServerID {
+		if err := os.RemoveAll(SpoolDir(stateDir(cfg))); err == nil {
+			out.DroppedSpool = true
+		}
+	}
+	_ = RecordEnrollCode(cfg, code)
 	return out, nil
+}
+
+// enrollCodeFile keeps a hash of the last code enrolled with, so the
+// container image can tell a new code (a reinstall) from the one it used.
+const enrollCodeFile = "enroll-code"
+
+func codeHash(code string) string {
+	sum := sha256.Sum256([]byte(strings.ToUpper(strings.TrimSpace(code))))
+	return hex.EncodeToString(sum[:])
+}
+
+// EnrolledWith reports whether code is the one this state last enrolled with.
+func EnrolledWith(cfg config.Config, code string) bool {
+	raw, err := os.ReadFile(filepath.Join(stateDir(cfg), enrollCodeFile))
+	return err == nil && strings.TrimSpace(string(raw)) == codeHash(code)
+}
+
+// RecordEnrollCode marks code as tried, so a refused one is not tried again.
+func RecordEnrollCode(cfg config.Config, code string) error {
+	return statefile.Write(filepath.Join(stateDir(cfg), enrollCodeFile), []byte(codeHash(code)+"\n"), 0o600)
+}
+
+func stateDir(cfg config.Config) string {
+	if cfg.StateDir != "" {
+		return cfg.StateDir
+	}
+	return filepath.Dir(cfg.File)
 }

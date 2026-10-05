@@ -24,7 +24,7 @@ type State struct {
 
 	// For `status`.
 	LastPushAt     time.Time `json:"last_push_at,omitempty"`
-	LastPushStatus string    `json:"last_push_status,omitempty"` // ok | retrying | rejected | revoked
+	LastPushStatus string    `json:"last_push_status,omitempty"` // Outcome.String(): ok, retrying, rejected, ...
 	LastPushCode   int       `json:"last_push_code,omitempty"`
 	LastError      string    `json:"last_error,omitempty"`
 	LastSuccessAt  time.Time `json:"last_success_at,omitempty"`

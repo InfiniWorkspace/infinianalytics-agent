@@ -134,6 +134,16 @@ func (s *Spool) rotate(seq uint64) error {
 		s.active.Close()
 		s.active = nil
 	}
+	// Segments are read in name order, so a new one must sort after every
+	// one on disk even when the sequence starts over (a state.json that was
+	// lost or unreadable): named after seq, it would sort before the pending
+	// ones, behind the cursor, and never be pushed.
+	if segs, err := s.segments(); err == nil && len(segs) > 0 {
+		last, err := strconv.ParseUint(strings.TrimSuffix(segs[len(segs)-1], segmentExt), 10, 64)
+		if err == nil && last >= seq {
+			seq = last + 1
+		}
+	}
 	name := fmt.Sprintf("%020d%s", seq, segmentExt)
 	f, err := os.OpenFile(filepath.Join(s.dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {

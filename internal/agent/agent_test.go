@@ -108,11 +108,32 @@ func TestClassify(t *testing.T) {
 	cases := map[int]Outcome{
 		200: OutcomeOK, 0: OutcomeRetry, 500: OutcomeRetry, 503: OutcomeRetry, 429: OutcomeRetry,
 		408: OutcomeRetry, 401: OutcomeRevoked, 410: OutcomeRevoked, 413: OutcomeTooLarge,
-		400: OutcomeDrop, 422: OutcomeDrop, 404: OutcomeDrop,
+		400: OutcomeDrop, 422: OutcomeInvalid, 404: OutcomeDrop,
 	}
 	for status, want := range cases {
 		if got := Classify(status); got != want {
 			t.Errorf("Classify(%d) = %v, want %v", status, got, want)
+		}
+	}
+}
+
+func TestFitPushStaysWithinTheBackendCaps(t *testing.T) {
+	busy := func(containers, events int) Record {
+		return Record{Containers: make([]ContainerRow, containers), Events: make([]Event, events)}
+	}
+	cases := []struct {
+		name string
+		recs []Record
+		want int
+	}{
+		{"quiet hour", []Record{busy(50, 0), busy(50, 1), busy(50, 0)}, 3},
+		{"containers", []Record{busy(8000, 0), busy(8000, 0), busy(8000, 0)}, 2},
+		{"events", []Record{busy(0, 600), busy(0, 400), busy(0, 1)}, 2},
+		{"one record over a cap still goes", []Record{busy(0, 1500), busy(0, 1)}, 1},
+	}
+	for _, c := range cases {
+		if got := fitPush(c.recs); got != c.want {
+			t.Errorf("%s: fitPush = %d, want %d", c.name, got, c.want)
 		}
 	}
 }

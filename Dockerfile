@@ -13,7 +13,8 @@
 # those are the host's as-is; --network host makes the network counters the
 # host's too; /hostfs gives the host's disks, machine id, hostname and OS
 # release; the socket gives its containers. The code is used once - the key it
-# is traded for lives in the /state volume. -e IA_AGENT_DISKS=false and/or
+# is traded for lives in the /state volume; a new code (a reinstall) enrolls again
+# in place and keeps the spool. -e IA_AGENT_DISKS=false and/or
 # -e IA_AGENT_DOCKER=false leave those modules out (drop the socket mount too).
 FROM golang:1.27 AS build
 ARG VERSION=dev

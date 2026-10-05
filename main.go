@@ -149,20 +149,33 @@ func runAgent(cfgPath string) service.RunFunc {
 			}
 			return cfg.FileErr
 		}
-		// The container image has no interactive step: a first start with
-		// IA_AGENT_ENROLL_CODE enrolls, later starts find agent.env in the
-		// state volume and ignore the (by then used) code.
-		if code := strings.TrimSpace(os.Getenv("IA_AGENT_ENROLL_CODE")); code != "" && !cfg.Enrolled() {
+		// The container image has no interactive step: a start with an
+		// IA_AGENT_ENROLL_CODE it has not enrolled with yet enrolls, in place
+		// - a reinstall keeps the state volume, and with it the spool. Later
+		// starts find the code already used and skip it.
+		if code := strings.TrimSpace(os.Getenv("IA_AGENT_ENROLL_CODE")); code != "" && !agent.EnrolledWith(cfg, code) {
 			url := cfg.URL
 			if url == "" {
 				url = defaultURL
 			}
 			res, err := agent.Enroll(ctx, cfg, url, code, version)
-			if err != nil {
+			switch {
+			case err == nil:
+				logf("enrolled as server %s", res.ServerID)
+				if res.DroppedSpool {
+					logf("dropped the windows not pushed yet: they belong to server %s", cfg.ServerID)
+				}
+				cfg = config.Load(cfgPath)
+			case !cfg.Enrolled():
 				return err
+			default:
+				// Most likely the code it enrolled with before this
+				// version recorded codes, long expired.
+				logf("IA_AGENT_ENROLL_CODE not used (%v); staying enrolled as server %s", err, cfg.ServerID)
+				if errors.Is(err, agent.ErrEnrollRefused) {
+					_ = agent.RecordEnrollCode(cfg, code)
+				}
 			}
-			logf("enrolled as server %s", res.ServerID)
-			cfg = config.Load(cfgPath)
 		}
 		a, err := agent.New(cfg, version, logf)
 		if err != nil {
@@ -279,6 +292,9 @@ func enroll(code, url, cfgPath, machineID string, settings map[string]string, re
 	}
 	saveSettings(cfg.File, settings, reset)
 	fmt.Printf("Enrolled as server %s.\nSettings saved to %s.\n", res.ServerID, cfg.File)
+	if res.DroppedSpool {
+		fmt.Printf("Dropped the windows not pushed yet: they belong to server %s.\n", cfg.ServerID)
+	}
 	fmt.Printf("Next: `%s install` to run it as a service (or `%s run` to try it in the foreground).\n", exeName(), exeName())
 }
 
