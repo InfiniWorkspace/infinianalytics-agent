@@ -287,7 +287,7 @@ func TestEffective(t *testing.T) {
 	cfg := config.Load(filepath.Join(t.TempDir(), "missing.env"))
 	got := Effective(cfg)
 	if !got.Disks || !got.Docker || got.ContainerLimit != 50 || got.DockerConcurrency != 4 ||
-		got.FSIntervalS != 60 || got.SpoolMaxAgeS != 172800 || got.SpoolMaxMB != 50 ||
+		got.FSIntervalS != 60 || got.SpoolMaxAgeS != 172800 || got.SpoolMaxMB != 65 ||
 		got.DockerHost != "" || got.Container || len(got.FSRoots) != 1 || got.FSRoots[0] != "auto" {
 		t.Errorf("defaults = %+v", got)
 	}
