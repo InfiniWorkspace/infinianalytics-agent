@@ -5,8 +5,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -76,6 +78,22 @@ type PushError struct {
 	Status int
 	Detail string
 	Err    error
+}
+
+func (e *PushError) Unwrap() error { return e.Err }
+
+// Unreachable reports a push that never reached the backend: no network, no
+// route, DNS, or nothing listening. Retrying those often costs the backend
+// nothing (it never sees them) and is what brings a server back on the
+// dashboard as soon as its network returns. A timeout waiting for the answer
+// or a 5xx is the backend struggling, and keeps the long backoff.
+func Unreachable(err error) bool {
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return true
+	}
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
 }
 
 func (e *PushError) Error() string {
