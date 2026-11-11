@@ -104,6 +104,70 @@ func TestBackoffDoublesToTheCap(t *testing.T) {
 	}
 }
 
+func TestBackoffLowerCapForOneAttempt(t *testing.T) {
+	b := newBackoff(10*time.Second, 5*time.Minute)
+	b.jitter = func() float64 { return 0.5 } // no jitter
+	var got []time.Duration
+	for range 7 {
+		got = append(got, b.nextUpTo(time.Minute))
+	}
+	// 10 s, 20 s, 40 s and then the lower cap, never the 5 min one.
+	want := []time.Duration{10 * time.Second, 20 * time.Second, 40 * time.Second,
+		time.Minute, time.Minute, time.Minute, time.Minute}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("nextUpTo = %v, want %v", got, want)
+		}
+	}
+	// The attempts still counted: another kind of failure goes on from there.
+	if d := b.next(); d != 5*time.Minute {
+		t.Fatalf("next after 7 attempts = %v, want the full cap", d)
+	}
+}
+
+// pushErr sends one push the way pushLoop does and returns its error.
+func pushErr(t *testing.T, url string, timeout time.Duration) error {
+	t.Helper()
+	p := NewPusher(url, "key", "test")
+	p.HTTP.Timeout = timeout
+	_, outcome, err := p.Push(context.Background(), Batch{})
+	if outcome != OutcomeRetry {
+		t.Fatalf("outcome = %v, want retry", outcome)
+	}
+	return err
+}
+
+func TestUnreachable(t *testing.T) {
+	// Nothing listening: the dial fails, the backend never saw the push.
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+	if err := pushErr(t, closedURL, 5*time.Second); !Unreachable(err) {
+		t.Fatalf("connection refused: Unreachable(%v) = false", err)
+	}
+	// A name that does not resolve (.invalid never does, RFC 2606).
+	if err := pushErr(t, "http://ia-agent-test.invalid", 5*time.Second); !Unreachable(err) {
+		t.Fatalf("DNS failure: Unreachable(%v) = false", err)
+	}
+	// The backend accepted the connection but did not answer in time: it is
+	// struggling, so this keeps the long backoff.
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+	}))
+	defer slow.Close()
+	if err := pushErr(t, slow.URL, 100*time.Millisecond); Unreachable(err) {
+		t.Fatalf("timeout waiting for the answer: Unreachable(%v) = true", err)
+	}
+	// An answer, even an error, is not "unreachable".
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer failing.Close()
+	if err := pushErr(t, failing.URL, 5*time.Second); Unreachable(err) {
+		t.Fatalf("503: Unreachable(%v) = true", err)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	cases := map[int]Outcome{
 		200: OutcomeOK, 0: OutcomeRetry, 500: OutcomeRetry, 503: OutcomeRetry, 429: OutcomeRetry,

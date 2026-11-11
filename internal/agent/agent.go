@@ -30,6 +30,10 @@ const (
 	finalPushTimeout = 3 * time.Second
 	// While the key is revoked, look for a new one (a fresh `enroll`) this often.
 	revokedRecheck = time.Minute
+	// Longest wait between retries while the backend cannot be reached at all
+	// (see Unreachable). Other failures back off up to retryMax.
+	unreachableRetryMax = time.Minute
+	retryMax            = 5 * time.Minute
 )
 
 // Agent samples the host every SampleInterval, closes a window every
@@ -341,7 +345,7 @@ func (a *Agent) readFilesystems(ts time.Time) []FilesystemRow {
 // pushLoop drains the spool to the backend for as long as ctx lives.
 func (a *Agent) pushLoop(ctx context.Context) {
 	pusher := NewPusher(a.cfg.URL, a.cfg.AgentKey, a.version)
-	b := newBackoff(a.cfg.WindowInterval, 5*time.Minute)
+	b := newBackoff(a.cfg.WindowInterval, retryMax)
 	limit := maxRecordsPerPush
 	wait := a.cfg.WindowInterval
 	for {
@@ -380,7 +384,11 @@ func (a *Agent) pushLoop(ctx context.Context) {
 				wait = drainPause // more is queued: keep going
 			}
 		case OutcomeRetry:
-			wait = b.next()
+			if Unreachable(err) {
+				wait = b.nextUpTo(unreachableRetryMax)
+			} else {
+				wait = b.next()
+			}
 			a.logf("push failed (%v); retrying in %s", err, wait.Round(time.Second))
 		case OutcomeTooLarge, OutcomeInvalid:
 			// Halve until the window the backend refuses is pushed alone,
